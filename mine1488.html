@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MINECRAFT 2D: TEXTURE PACK</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #87CEEB; font-family: 'Arial Black', sans-serif; }
+        canvas { display: block; image-rendering: pixelated; }
+        
+        #menu { position: fixed; inset: 0; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; color: white; }
+        input { padding: 12px; font-size: 18px; border-radius: 5px; margin: 10px; width: 250px; text-align: center; }
+        button { padding: 15px 40px; font-size: 20px; cursor: pointer; background: #4caf50; color: white; border: none; border-radius: 8px; }
+
+        #ui { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #fff; padding: 10px; border-radius: 5px; display: none; }
+        
+        /* Динамічний Hotbar */
+        #hotbar { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: none; gap: 8px; background: #222; padding: 8px; border: 2px solid #000; border-radius: 5px; }
+        .slot { width: 60px; height: 60px; border: 2px solid #555; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; font-size: 10px; background: #333; }
+        .slot img { width: 32px; height: 32px; image-rendering: pixelated; margin-bottom: 2px; }
+        .active { border-color: #fbff00; background: #444; box-shadow: inset 0 0 10px #fbff00; }
+    </style>
+</head>
+<body>
+
+    <div id="menu">
+        <h1>MINECRAFT 2D: TEXTURES</h1>
+        <input type="text" id="nickInput" placeholder="Твій Нік" maxlength="10">
+        <input type="text" id="roomInput" placeholder="Назва кімнати" maxlength="12">
+        <button id="joinBtn">ГРАТИ З ТЕКСТУРАМИ</button>
+    </div>
+
+    <div id="ui"><b>КІМНАТА: <span id="roomNameDisplay"></span></b></div>
+    <div id="hotbar"></div> <canvas id="gameCanvas"></canvas>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-app.js";
+        import { getDatabase, ref, set, onValue, update as dbUpdate, onDisconnect, get } from "https://www.gstatic.com/firebasejs/9.17.1/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCeqMRCR3TJt44fuw-1Z3aDvOEvLcgHYJU",
+            authDomain: "minecraft1488-560f8.firebaseapp.com",
+            projectId: "minecraft1488-560f8",
+            storageBucket: "minecraft1488-560f8.firebasestorage.app",
+            messagingSenderId: "75653638829",
+            appId: "1:75653638829:web:ac58719db72fb0aa38f424",
+            measurementId: "G-XBLSKLRLZ7",
+            databaseURL: "https://minecraft1488-560f8-default-rtdb.europe-west1.firebasedatabase.app"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        
+        // --- НАЛАШТУВАННЯ ТЕКСТУР ---
+        // Просто додай назву файлу (без .png) у цей список:
+        const textureFiles = ['dirt', 'grass', 'stone', 'wood', 'glass', 'brick'];
+        const textures = {};
+
+        // Автоматичне створення слотів та завантаження картинок
+        const hotbarEl = document.getElementById('hotbar');
+        textureFiles.forEach((name, index) => {
+            const id = index + 1;
+            const img = new Image();
+            img.src = `${name}.png`; // Шлях до картинки у твоїй папці
+            textures[id] = img;
+
+            // Додаємо в UI
+            const slot = document.createElement('div');
+            slot.className = `slot ${id === 1 ? 'active' : ''}`;
+            slot.id = `s${id}`;
+            slot.innerHTML = `<img src="${name}.png" onerror="this.style.display='none'"><span>${name.toUpperCase()}</span>`;
+            hotbarEl.appendChild(slot);
+        });
+
+        // --- ГРА ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const tileSize = 32;
+        const worldWidth = 60;
+        const worldHeight = 35;
+        
+        let world = [];
+        let otherPlayers = {};
+        let currentRoom = "";
+        let isGameStarted = false;
+        let myNick = "Гравець";
+        const myId = Math.random().toString(36).substr(2, 9);
+        const myColor = `hsl(${Math.random() * 360}, 70%, 50%)`;
+
+        const player = { x: 200, y: 100, w: 22, h: 42, vx: 0, vy: 0, speed: 5, jumpPower: 11, grounded: false };
+        const keys = {};
+        let selected = 1;
+
+        document.getElementById('joinBtn').onclick = async () => {
+            const room = document.getElementById('roomInput').value.trim();
+            const nick = document.getElementById('nickInput').value.trim();
+            if (!room || !nick) return alert("Заповни поля!");
+            
+            currentRoom = room; myNick = nick;
+            document.getElementById('menu').style.display = 'none';
+            document.getElementById('ui').style.display = 'block';
+            hotbarEl.style.display = 'flex';
+            document.getElementById('roomNameDisplay').innerText = currentRoom;
+
+            const roomRef = ref(db, `rooms/${currentRoom}/world`);
+            const snap = await get(roomRef);
+            if (!snap.exists()) await set(roomRef, createWorld());
+
+            onValue(roomRef, (s) => world = s.val() || []);
+            onValue(ref(db, `rooms/${currentRoom}/players`), (s) => otherPlayers = s.val() || {});
+            onDisconnect(ref(db, `rooms/${currentRoom}/players/${myId}`)).remove();
+            
+            isGameStarted = true;
+            requestAnimationFrame(draw);
+        };
+
+        function createWorld() {
+            let nw = [];
+            for (let x = 0; x < worldWidth; x++) {
+                nw[x] = [];
+                for (let y = 0; y < worldHeight; y++) {
+                    let h = 15 + Math.floor(Math.sin(x * 0.2) * 3);
+                    nw[x][y] = (y > h + 4) ? 3 : (y > h ? 1 : (y === h ? 2 : 0));
+                }
+            }
+            return nw;
+        }
+
+        function getBlock(x, y) {
+            let bx = Math.floor(x / tileSize); let by = Math.floor(y / tileSize);
+            if (bx < 0 || bx >= worldWidth || by < 0 || by >= worldHeight) return 0;
+            return world[bx] ? world[bx][by] : 0;
+        }
+
+        function playerUpdate() {
+            if (!isGameStarted || !world.length) return;
+            player.vx = keys['KeyA'] ? -player.speed : (keys['KeyD'] ? player.speed : 0);
+            if ((keys['KeyW'] || keys['Space']) && player.grounded) { player.vy = -player.jumpPower; player.grounded = false; }
+            player.vy += 0.5; player.x += player.vx;
+
+            if (player.vx > 0 && (getBlock(player.x + player.w, player.y + 2) || getBlock(player.x + player.w, player.y + player.h - 2))) 
+                player.x = Math.floor((player.x + player.w) / tileSize) * tileSize - player.w;
+            if (player.vx < 0 && (getBlock(player.x, player.y + 2) || getBlock(player.x, player.y + player.h - 2))) 
+                player.x = (Math.floor(player.x / tileSize) + 1) * tileSize;
+
+            player.y += player.vy; player.grounded = false;
+            if (player.vy > 0 && (getBlock(player.x + 2, player.y + player.h) || getBlock(player.x + player.w - 2, player.y + player.h))) {
+                player.y = Math.floor((player.y + player.h) / tileSize) * tileSize - player.h;
+                player.vy = 0; player.grounded = true;
+            } else if (player.vy < 0 && (getBlock(player.x + 2, player.y) || getBlock(player.x + player.w - 2, player.y))) {
+                player.y = (Math.floor(player.y / tileSize) + 1) * tileSize; player.vy = 0;
+            }
+
+            dbUpdate(ref(db, `rooms/${currentRoom}/players/${myId}`), { x: player.x, y: player.y, color: myColor, nick: myNick });
+        }
+
+        function draw() {
+            if (!isGameStarted) return;
+            playerUpdate();
+            canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+            const cx = Math.floor(player.x - canvas.width / 2);
+            const cy = Math.floor(player.y - canvas.height / 2);
+            ctx.translate(-cx, -cy);
+
+            for (let x = 0; x < worldWidth; x++) {
+                for (let y = 0; y < worldHeight; y++) {
+                    let b = world[x] ? world[x][y] : 0;
+                    if (b > 0) {
+                        if (textures[b] && textures[b].complete) {
+                            ctx.drawImage(textures[b], x * tileSize, y * tileSize, tileSize, tileSize);
+                        } else {
+                            ctx.fillStyle = '#555'; // Заглушка, якщо текстура не завантажилась
+                            ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                        }
+                    }
+                }
+            }
+
+            for (let id in otherPlayers) {
+                if (id === myId) continue;
+                let p = otherPlayers[id];
+                ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, player.w, player.h);
+                ctx.fillStyle = "white"; ctx.font = "12px Arial"; ctx.fillText(p.nick || "???", p.x - 5, p.y - 10);
+            }
+
+            ctx.fillStyle = myColor; ctx.fillRect(player.x, player.y, player.w, player.h);
+            ctx.fillStyle = "white"; ctx.fillText(myNick, player.x - 5, player.y - 10);
+            requestAnimationFrame(draw);
+        }
+
+        window.onmousedown = (e) => {
+            if (!isGameStarted) return;
+            const mx = Math.floor((e.clientX + (player.x - canvas.width / 2)) / tileSize);
+            const my = Math.floor((e.clientY + (player.y - canvas.height / 2)) / tileSize);
+            if (world[mx]) {
+                world[mx][my] = e.button === 0 ? 0 : selected;
+                set(ref(db, `rooms/${currentRoom}/world`), world);
+            }
+        };
+
+        window.onkeydown = (e) => { 
+            keys[e.code] = true; 
+            let num = parseInt(e.key);
+            if (num > 0 && num <= textureFiles.length) {
+                selected = num;
+                document.querySelectorAll('.slot').forEach((s, i) => s.className = (i+1 == selected) ? 'slot active' : 'slot');
+            }
+        };
+        window.onkeyup = (e) => keys[e.code] = false;
+        window.oncontextmenu = (e) => e.preventDefault();
+    </script>
+</body>
+</html>
