@@ -1,44 +1,27 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>MINECRAFT 2D: PIXEL PERFECT</title>
+    <title>MINECRAFT 2D: NO ARTIFACTS</title>
     <style>
         body { margin: 0; overflow: hidden; background: #87CEEB; font-family: 'Arial Black', sans-serif; }
-        
-        /* Додаємо pixelated для всього сайту */
         canvas { 
             display: block; 
-            image-rendering: optimizeSpeed;             /* Legacy */
-            image-rendering: -moz-crisp-edges;          /* Firefox */
-            image-rendering: -webkit-optimize-contrast; /* Safari */
-            image-rendering: -o-crisp-edges;            /* OS X & Opera */
-            image-rendering: pixelated;                 /* Standard */
-            -ms-interpolation-mode: nearest-neighbor;   /* IE */
+            image-rendering: pixelated; /* Чіткі пікселі */
         }
-
         #menu { position: fixed; inset: 0; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; color: white; }
         input { padding: 12px; font-size: 18px; border-radius: 5px; margin: 10px; width: 250px; text-align: center; border: none; }
         button { padding: 15px 40px; font-size: 20px; cursor: pointer; background: #4caf50; color: white; border: none; border-radius: 8px; }
-        
         #ui { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: #fff; padding: 10px; border-radius: 5px; display: none; pointer-events: none; }
-        
         #hotbar { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: none; gap: 8px; background: #222; padding: 8px; border: 2px solid #000; border-radius: 5px; }
         .slot { width: 60px; height: 60px; border: 2px solid #555; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; font-size: 9px; background: #333; }
-        
-        /* Робимо іконки в барі теж чіткими */
-        .slot img { 
-            width: 30px; 
-            height: 30px; 
-            image-rendering: pixelated; 
-            margin-bottom: 2px; 
-        }
+        .slot img { width: 30px; height: 30px; image-rendering: pixelated; margin-bottom: 2px; }
         .active { border-color: #fbff00; background: #444; box-shadow: 0 0 10px #fbff00; }
     </style>
 </head>
 <body>
 
     <div id="menu">
-        <h1>MINECRAFT 2D: PIXEL ART</h1>
+        <h1>MINECRAFT 2D: FIXED</h1>
         <input type="text" id="nickInput" placeholder="Твій Нік" maxlength="10">
         <input type="text" id="roomInput" placeholder="Кімната" maxlength="12">
         <button id="joinBtn">ГРАТИ</button>
@@ -76,10 +59,8 @@
             const id = index + 1;
             const img = new Image();
             img.src = name + ".png"; 
-            
             img.onload = () => { textures[id] = { img, status: 'ok' }; };
             img.onerror = () => { textures[id] = { status: 'error' }; };
-            
             const slot = document.createElement('div');
             slot.className = `slot ${id === 1 ? 'active' : ''}`;
             slot.id = `s${id}`;
@@ -89,8 +70,6 @@
 
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        
-        // ВАЖЛИВО: Вимикаємо згладжування
         ctx.imageSmoothingEnabled = false;
 
         const tileSize = 32;
@@ -112,7 +91,7 @@
         document.getElementById('joinBtn').onclick = async () => {
             const room = document.getElementById('roomInput').value.trim();
             const nick = document.getElementById('nickInput').value.trim();
-            if (!room || !nick) return alert("Fill fields!");
+            if (!room || !nick) return alert("Заповни поля!");
             currentRoom = room; myNick = nick;
             document.getElementById('menu').style.display = 'none';
             document.getElementById('ui').style.display = 'block';
@@ -169,17 +148,17 @@
             if (!isGameStarted) return;
             playerUpdate();
             
-            // Скидаємо розмір канвасу під вікно
             if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
                 canvas.width = window.innerWidth;
                 canvas.height = window.innerHeight;
-                // Після зміни розміру канвасу налаштування smoothing часто злітають, ставимо знову:
                 ctx.imageSmoothingEnabled = false;
             }
 
-            const cx = Math.floor(player.x - canvas.width / 2);
-            const cy = Math.floor(player.y - canvas.height / 2);
+            // Округляємо камеру до цілих пікселів
+            const cx = Math.round(player.x - canvas.width / 2);
+            const cy = Math.round(player.y - canvas.height / 2);
             
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.save();
             ctx.translate(-cx, -cy);
 
@@ -187,11 +166,14 @@
                 for (let y = 0; y < worldHeight; y++) {
                     let b = world[x] ? world[x][y] : 0;
                     if (b > 0) {
+                        // Округляємо позиції блоків
+                        const bx = Math.round(x * tileSize);
+                        const by = Math.round(y * tileSize);
                         if (textures[b] && textures[b].status === 'ok') {
-                            ctx.drawImage(textures[b].img, x * tileSize, y * tileSize, tileSize, tileSize);
+                            ctx.drawImage(textures[b].img, bx, by, tileSize, tileSize);
                         } else {
                             ctx.fillStyle = fallbackColors[b] || '#555';
-                            ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+                            ctx.fillRect(bx, by, tileSize, tileSize);
                         }
                     }
                 }
@@ -200,11 +182,17 @@
             for (let id in otherPlayers) {
                 if (id === myId) continue;
                 let p = otherPlayers[id];
-                ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, player.w, player.h);
-                ctx.fillStyle = "white"; ctx.font = "12px Arial"; ctx.fillText(p.nick || "???", p.x - 5, p.y - 10);
+                ctx.fillStyle = p.color; 
+                ctx.fillRect(Math.round(p.x), Math.round(p.y), player.w, player.h);
+                ctx.fillStyle = "white"; ctx.font = "12px Arial"; 
+                ctx.fillText(p.nick || "???", Math.round(p.x) - 5, Math.round(p.y) - 10);
             }
-            ctx.fillStyle = myColor; ctx.fillRect(player.x, player.y, player.w, player.h);
-            ctx.fillStyle = "white"; ctx.fillText(myNick, player.x - 5, player.y - 10);
+
+            // Малюємо себе (теж з округленням)
+            ctx.fillStyle = myColor; 
+            ctx.fillRect(Math.round(player.x), Math.round(player.y), player.w, player.h);
+            ctx.fillStyle = "white"; 
+            ctx.fillText(myNick, Math.round(player.x) - 5, Math.round(player.y) - 10);
             
             ctx.restore();
             requestAnimationFrame(draw);
